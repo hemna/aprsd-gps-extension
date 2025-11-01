@@ -1,0 +1,1 @@
+from aprsd_gps_extension.cmds import show  # noqa: F401
