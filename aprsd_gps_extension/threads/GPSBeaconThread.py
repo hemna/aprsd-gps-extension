@@ -7,7 +7,7 @@ from aprsd.threads import tx as aprsd_tx
 from gpsdclient import GPSDClient
 from oslo_config import cfg
 
-from aprsd_gps_extension.utils import beacon_processor
+from aprsd_gps_extension.gps_processor import SmartBeaconProcessor
 
 CONF = cfg.CONF
 LOG = logging.getLogger("APRSD")
@@ -55,6 +55,11 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         except Exception as e:
             LOG.error(f"Error connecting to GPS daemon: {e}")
             return
+
+        self.beacon_processor = SmartBeaconProcessor(
+            distance_threshold_feet=CONF.aprsd_gps_extension.distance_threshold_feet,
+            time_window_minutes=CONF.aprsd_gps_extension.time_window_minutes,
+        )
 
     def _debug(self, message):
         if CONF.aprsd_gps_extension.debug:
@@ -106,7 +111,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
 
                 # Check if we should beacon based on smart beaconing logic
                 if CONF.enable_smart_beacon:
-                    should_beacon, distance_feet = beacon_processor.should_beacon(
+                    should_beacon, distance_feet = self.beacon_processor.should_beacon(
                         tpv_data
                     )
                     if should_beacon:

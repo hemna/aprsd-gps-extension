@@ -1,23 +1,24 @@
-import click
-import datetime
 import logging
 import signal
 import sys
 import time
-from oslo_config import cfg
 
 import aprsd
+import click
 from aprsd import cli_helper
-from aprsd import threads as aprsd_threads
-from aprsd import packets, client
-from aprsd.client import client_factory
-from aprsd.threads import stats as stats_thread
-from aprsd.threads import keepalive
+from gpsdclient import GPSDClient
+from oslo_config import cfg
+from rich.console import Console
 
 import aprsd_gps_extension
+
 # Import the extension's configuration options
-from aprsd_gps_extension import conf  # noqa
-from aprsd_gps_extension import cmds, utils  # noqa
+from aprsd_gps_extension import (  # noqa
+    cmds,
+    conf,  # noqa
+    utils,
+)
+from aprsd_gps_extension.gps_processor import SmartBeaconProcessor
 
 CONF = cfg.CONF
 LOG = logging.getLogger("APRSD")
@@ -28,25 +29,26 @@ def signal_handler(sig, frame):
     # APRSD based threads are automatically added
     # to the APRSDThreadList when started.
     # This will tell them all to stop.
-    aprsd_threads.APRSDThreadList().stop_all()
-    if "subprocess" not in str(frame):
-        LOG.info(
-            "Ctrl+C, Sending all threads exit! Can take up to 10 seconds {}".format(
-                datetime.datetime.now(),
-            ),
-        )
-        time.sleep(1.5)
-        packets.PacketTrack().save()
-        packets.WatchList().save()
-        packets.SeenList().save()
+    sys.exit(0)
 
 
 @cmds.gps.command()
 @cli_helper.add_options(cli_helper.common_options)
+@click.option(
+    "--host",
+    default=None,
+    help="GPS daemon host. Defaults to CONF.aprsd_gps_extension.gpsd_host",
+)
+@click.option(
+    "--port",
+    default=None,
+    help="GPS daemon port. Defaults to CONF.aprsd_gps_extension.gpsd_port",
+    type=int,
+)
 @click.pass_context
 @cli_helper.process_standard_options
-def show(ctx):
-    """APRSD GPSD Extension to provide active GPS"""
+def show(ctx, host, port):
+    """Show the GPS data from the gpsdclient."""
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
@@ -62,51 +64,131 @@ def show(ctx):
 
     # Dump all the config options now.
     CONF.log_opt_values(LOG, logging.DEBUG)
-
-    # Make sure we have 1 client transport enabled
-    if not client_factory.is_client_enabled():
-        LOG.error("No Clients are enabled in config.")
-        sys.exit(-1)
-
-    if not client_factory.is_client_configured():
-        LOG.error("APRS client is not properly configured in config file.")
-        sys.exit(-1)
-
-    # Creates the client object
-    LOG.info("Creating client connection")
-    aprs_client = client_factory.create()
-    LOG.info(aprs_client)
-    if not aprs_client.login_success:
-        # We failed to login, will just quit!
-        msg = f"Login Failure: {aprs_client.login_failure}"
-        LOG.error(msg)
-        print(msg)
-        sys.exit(-1) 
-    
-
-    # Try and load saved MsgTrack list
-    LOG.debug("Loading saved objects.")
-    packets.PacketTrack().load()
-    packets.WatchList().load()
-    packets.SeenList().load()
-
-    # This thread collects all the stats from all the
-    # objects that generate stats and dumps them all to disk.
-    stats_store_thread = stats_thread.APRSDStatsStoreThread()
-    stats_store_thread.start()
-
-    keepalive_thread = keepalive.KeepAliveThread()
-    keepalive_thread.start()
-
-    LOG.info("Started the show command.")
+    console = Console()
 
     # Now add your code here to start your extension.
     # You know that you have a client configured and connected
     # Create your threads, and start them here.
 
-    # XXX YOUR threads started here.
+    if not CONF.aprsd_gps_extension.enabled:
+        console.print("[red]GPS extension is not enabled, exiting[/red]")
+        sys.exit(-1)
 
-    # Now wait for keepalive to be done.
-    # CTRL-C will stop all the started threads automatically.
-    stats_store_thread.join()
-    keepalive_thread.join()
+    # Make sure we have a valid host and port
+    if not host:
+        host = CONF.aprsd_gps_extension.gpsd_host
+    if not port:
+        port = CONF.aprsd_gps_extension.gpsd_port
+    if not host or not port:
+        console.print("[red]GPS host and port are not set, exiting[/red]")
+        sys.exit(-1)
+
+    distance_threshold = CONF.aprsd_gps_extension.smart_beacon_distance_threshold
+    time_window = CONF.aprsd_gps_extension.smart_beacon_time_window
+
+    # now lets create the gpsdclient object that
+    try:
+        client = GPSDClient(host=host, port=port)
+    except Exception as e:
+        console.print(f"[red]Error connecting to GPS daemon: {e}[/red]")
+        return
+
+    with console.status("Connecting to GPS daemon") as status:
+        while True:
+            time.sleep(5)
+
+            try:
+                # Collect the latest TPV and SKY messages from the stream
+                tpv_data = None
+                sky_data = None
+
+                # Read messages to get the latest TPV and SKY
+                beacon_processor = SmartBeaconProcessor(
+                    distance_threshold_feet=CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
+                    time_window_minutes=CONF.aprsd_gps_extension.smart_beacon_time_window,
+                )
+                status.update("Polling GPS daemon")
+                for message in client.dict_stream(convert_datetime=True):
+                    msg_class = message.get("class")
+
+                    if msg_class == "TPV":
+                        tpv_data = message
+                    elif msg_class == "SKY":
+                        sky_data = message
+
+                    # Once we have TPV data, process and break
+                    if tpv_data:
+                        break
+
+                if not tpv_data:
+                    console.print("[yellow]No GPS data available (no fix)[/yellow]")
+                    continue
+
+                # Check if we should beacon based on smart beaconing logic
+                should_beacon, distance_feet = beacon_processor.should_beacon(tpv_data)
+
+                if not should_beacon:
+                    # Position hasn't changed enough or time window hasn't passed
+                    if distance_feet is not None:
+                        status.update(
+                            f"[dim]Waiting for position change > {distance_threshold}ft within {time_window}min... (last: {distance_feet:.1f}ft)[/dim]"
+                        )
+                    else:
+                        status.update("[dim]Waiting for valid position data...[/dim]")
+                    continue
+
+                # Display GPS information (only if beaconing)
+                try:
+                    # mode = tpv_data.get("mode", "N/A")
+                    # console.print(f"[green]Mode:[/green] {mode}")
+
+                    timestamp = tpv_data.get("time", "N/A")
+                    # console.print(f"[green]Timestamp:[/green] {timestamp}")
+
+                    # Satellite data from SKY message
+                    if sky_data:
+                        try:
+                            satellites = sky_data.get("satellites", [])
+                            used_count = sum(
+                                1 for sat in satellites if sat.get("used", False)
+                            )
+                            total_count = len(satellites)
+                            console.print(
+                                f"[green]Satellites (used/total):[/green] {used_count} / {total_count}"
+                            )
+                        except (AttributeError, KeyError):
+                            console.print(
+                                "[yellow]Satellite data not available[/yellow]"
+                            )
+
+                    # Position data from TPV message
+                    try:
+                        lat = tpv_data.get("lat")
+                        lon = tpv_data.get("lon")
+                        alt = tpv_data.get("alt", "N/A")
+
+                        if lat is not None and lon is not None:
+                            if distance_feet is not None:
+                                status.update(
+                                    f"[bold green]Position:[/bold green] {lat}, {lon}, {alt}m  --  {timestamp}  [cyan](moved {distance_feet:.1f}ft)[/cyan]"
+                                )
+                            else:
+                                status.update(
+                                    f"[bold green]Position:[/bold green] {lat}, {lon}, {alt}m  --  {timestamp}"
+                                )
+                        else:
+                            console.print(
+                                "[yellow]Position data not available (no fix)[/yellow]"
+                            )
+                    except (AttributeError, KeyError):
+                        console.print("[yellow]Position data not available[/yellow]")
+
+                except AttributeError as e:
+                    console.print(f"[yellow]Some GPS data unavailable: {e}[/yellow]")
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Interrupted by user[/yellow]")
+                break
+            except Exception as e:
+                console.print(f"[red]Error polling GPS daemon: {e}[/red]")
+                continue
