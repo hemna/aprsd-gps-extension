@@ -3,11 +3,14 @@ import time
 
 from aprsd import threads as aprsd_threads
 from aprsd.packets import core
+from aprsd.stats import collector
 from aprsd.threads import tx as aprsd_tx
 from gpsdclient import GPSDClient
 from oslo_config import cfg
 
+from aprsd_gps_extension.conf import main  # noqa: F401
 from aprsd_gps_extension.gps_processor import SmartBeaconProcessor
+from aprsd_gps_extension.stats import GPSStats
 
 CONF = cfg.CONF
 LOG = logging.getLogger("APRSD")
@@ -57,9 +60,12 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
             return
 
         self.beacon_processor = SmartBeaconProcessor(
-            distance_threshold_feet=CONF.aprsd_gps_extension.distance_threshold_feet,
-            time_window_minutes=CONF.aprsd_gps_extension.time_window_minutes,
+            distance_threshold_feet=CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
+            time_window_minutes=CONF.aprsd_gps_extension.smart_beacon_time_window,
         )
+        stats_collector = collector.Collector()
+        LOG.error(f"REGISTERING GPSStats with stats_collector: {stats_collector}")
+        stats_collector.register_producer(GPSStats)
 
     def _debug(self, message):
         if CONF.aprsd_gps_extension.debug:
@@ -79,8 +85,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         self.last_beacon_time = time.time()
 
     def loop(self):
-        LOG.info("GPSClientThread loop")
-        if self.loop_count % CONF.aprsd_gps_extension.polling_period == 0:
+        if self.loop_count % CONF.aprsd_gps_extension.polling_interval == 0:
             # Collect the latest TPV and SKY messages from the stream
             tpv_data = None
             sky_data = None
@@ -92,6 +97,8 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                 for message in self.client.dict_stream(convert_datetime=True):
                     msg_class = message.get("class")
                     self._debug(f"Message class: {msg_class}")
+                    # process the message
+                    GPSStats().parse_message(message)
 
                     if msg_class == "TPV":
                         tpv_data = message
@@ -110,7 +117,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                     return True
 
                 # Check if we should beacon based on smart beaconing logic
-                if CONF.enable_smart_beacon:
+                if CONF.aprsd_gps_extension.beacon_type == "smart":
                     should_beacon, distance_feet = self.beacon_processor.should_beacon(
                         tpv_data
                     )
@@ -123,7 +130,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                         )
                         time.sleep(1)
                         return True
-                else:
+                elif CONF.aprsd_gps_extension.beacon_type == "interval":
                     # Now only beacon if the time interval from CONF.beacon_interval has passed
                     if time.time() - self.last_beacon_time < CONF.beacon_interval:
                         LOG.info("Not sending beacon, time interval has not passed")
@@ -131,9 +138,14 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                         return True
                     else:
                         self.send_beacon(tpv_data, sky_data)
+                else:
+                    LOG.info("Not sending beacon, beacon type is not set")
+                    time.sleep(1)
+                    return True
 
             except Exception as e:
                 LOG.error(f"Error polling GPS daemon: {e}")
+                GPSStats().parse_message({"class": "ERROR"})
                 time.sleep(1)
                 return True
 

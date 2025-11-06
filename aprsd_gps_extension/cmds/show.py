@@ -19,6 +19,7 @@ from aprsd_gps_extension import (  # noqa
     utils,
 )
 from aprsd_gps_extension.gps_processor import SmartBeaconProcessor
+from aprsd_gps_extension.stats import GPSStats
 
 CONF = cfg.CONF
 LOG = logging.getLogger("APRSD")
@@ -45,9 +46,15 @@ def signal_handler(sig, frame):
     help="GPS daemon port. Defaults to CONF.aprsd_gps_extension.gpsd_port",
     type=int,
 )
+@click.option(
+    "--stats",
+    is_flag=True,
+    default=False,
+    help="Show the GPS stats.",
+)
 @click.pass_context
 @cli_helper.process_standard_options
-def show(ctx, host, port):
+def show(ctx, host, port, stats):
     """Show the GPS data from the gpsdclient."""
 
     signal.signal(signal.SIGINT, signal_handler)
@@ -85,6 +92,10 @@ def show(ctx, host, port):
 
     distance_threshold = CONF.aprsd_gps_extension.smart_beacon_distance_threshold
     time_window = CONF.aprsd_gps_extension.smart_beacon_time_window
+    beacon_processor = SmartBeaconProcessor(
+        distance_threshold_feet=CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
+        time_window_minutes=CONF.aprsd_gps_extension.smart_beacon_time_window,
+    )
 
     # now lets create the gpsdclient object that
     try:
@@ -102,19 +113,20 @@ def show(ctx, host, port):
                 tpv_data = None
                 sky_data = None
 
-                # Read messages to get the latest TPV and SKY
-                beacon_processor = SmartBeaconProcessor(
-                    distance_threshold_feet=CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
-                    time_window_minutes=CONF.aprsd_gps_extension.smart_beacon_time_window,
-                )
                 status.update("Polling GPS daemon")
                 for message in client.dict_stream(convert_datetime=True):
-                    msg_class = message.get("class")
+                    console.print(f"[green]Message:[/green] {message}")
+                    # process the message
+                    GPSStats().parse_message(message)
 
-                    if msg_class == "TPV":
-                        tpv_data = message
-                    elif msg_class == "SKY":
-                        sky_data = message
+                    msg_class = message.get("class")
+                    match msg_class:
+                        case "TPV":
+                            tpv_data = message
+                        case "SKY":
+                            sky_data = message
+                        case _:
+                            pass
 
                     # Once we have TPV data, process and break
                     if tpv_data:
@@ -123,6 +135,10 @@ def show(ctx, host, port):
                 if not tpv_data:
                     console.print("[yellow]No GPS data available (no fix)[/yellow]")
                     continue
+
+                if stats:
+                    console.print(f"[green]GPS(TPV) stats:[/green] {tpv_data}")
+                    console.print(f"[green]GPS(SKY) stats:[/green] {sky_data}")
 
                 # Check if we should beacon based on smart beaconing logic
                 should_beacon, distance_feet = beacon_processor.should_beacon(tpv_data)

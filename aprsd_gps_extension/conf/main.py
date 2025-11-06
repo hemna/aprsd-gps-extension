@@ -22,21 +22,27 @@ extension_opts = [
         help="GPSD port to connect to",
     ),
     cfg.IntOpt(
-        "polling period",
-        default=10,
-        help="Polling period in seconds to get the GPS data",
+        "polling_interval",
+        default=2,
+        help="Polling interval in seconds to get the GPS data",
     ),
     cfg.BoolOpt(
         "debug",
         default=False,
         help="Enable debug logging",
     ),
-    cfg.BoolOpt(
-        "enable_smart_beacon",
-        default=False,
-        help="Enable the smart beacon feature. If this is disabled, the beacon will be sent every"
-        "CONF.beacon_interval seconds. When enabled, the beacon will be sent only if the"
-        "device has moved a certain distance or time since the last beacon was sent.",
+    cfg.StrOpt(
+        "beacon_type",
+        choices=["none", "interval", "smart"],
+        default="none",
+        help="The type of beaconing to use. 'none' will not send any beacons, but will fetch the GPS data from gpsd. "
+        "'interval' will send a beacon every CONF.beacon_interval seconds. "
+        "'smart' will send a beacon when the device has moved a certain distance or time since the last beacon was sent.",
+    ),
+    cfg.IntOpt(
+        "beacon_interval",
+        default=1800,
+        help="The number of seconds between beacon packets.",
     ),
     cfg.IntOpt(
         "smart_beacon_distance_threshold",
