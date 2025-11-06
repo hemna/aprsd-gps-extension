@@ -151,7 +151,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                     return True
 
                 # Check if we should beacon based on smart beaconing logic
-                if CONF.aprsd_gps_extension.beacon_type == "smart":
+                if self.beacon_type == "smart":
                     should_beacon, distance_feet = self.beacon_processor.should_beacon(
                         tpv_data
                     )
