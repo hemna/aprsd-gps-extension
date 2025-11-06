@@ -25,12 +25,13 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
     distance or time since the last beacon was sent.
     """
 
-    def __init__(self):
+    def __init__(self, notify_queue):
         super().__init__("GPSClientThread")
         self.client = None
         self.setup()
         # Now setup the initial timer
         self.last_beacon_time = time.time()
+        self.notify_queue = notify_queue
 
     def setup(self):
         LOG.info("GPSClientThread setup")
@@ -59,17 +60,38 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
             LOG.error(f"Error connecting to GPS daemon: {e}")
             return
 
+        stats_collector = collector.Collector()
+        LOG.error(f"REGISTERING GPSStats with stats_collector: {stats_collector}")
+        stats_collector.register_producer(GPSStats)
+        self.polling_interval = CONF.aprsd_gps_extension.polling_interval
+        self.beacon_type = CONF.aprsd_gps_extension.beacon_type
+        self.smart_beacon_distance_threshold = (
+            CONF.aprsd_gps_extension.smart_beacon_distance_threshold
+        )
+        self.smart_beacon_time_window = (
+            CONF.aprsd_gps_extension.smart_beacon_time_window
+        )
         self.beacon_processor = SmartBeaconProcessor(
             distance_threshold_feet=CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
             time_window_minutes=CONF.aprsd_gps_extension.smart_beacon_time_window,
         )
-        stats_collector = collector.Collector()
-        LOG.error(f"REGISTERING GPSStats with stats_collector: {stats_collector}")
-        stats_collector.register_producer(GPSStats)
 
     def _debug(self, message):
         if CONF.aprsd_gps_extension.debug:
             LOG.debug(f"GPS: {message}")
+
+    def update_settings(self, message):
+        self.beacon_interval = message.get("beacon_interval")
+        self.beacon_type = message.get("beacon_type")
+        self.smart_beacon_distance_threshold = message.get(
+            "smart_beacon_distance_threshold"
+        )
+        self.smart_beacon_time_window = message.get("smart_beacon_time_window")
+        # rebuild the SmartBeaconProcessor
+        self.beacon_processor = SmartBeaconProcessor(
+            distance_threshold_feet=self.smart_beacon_distance_threshold,
+            time_window_minutes=self.smart_beacon_time_window,
+        )
 
     def send_beacon(self, tpv_data, sky_data):
         LOG.info("Sending beacon")
@@ -83,8 +105,20 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         )
         aprsd_tx.send(pkt, direct=True)
         self.last_beacon_time = time.time()
+        LOG.error("Sending beacon to browser")
+        self.notify_queue.put({"message": "beacon sent"})
 
     def loop(self):
+        # First check if the notify queue has a message
+        if not self.notify_queue.empty():
+            message = self.notify_queue.get_nowait()
+            LOG.info(f"Notify queue message: {message}")
+            if message.get("message") == "beaconing_settings_changed":
+                self.update_settings(message)
+            elif message.get("message") == "beacon sent":
+                # put it back on the queue
+                self.notify_queue.put(message)
+
         if self.loop_count % CONF.aprsd_gps_extension.polling_interval == 0:
             # Collect the latest TPV and SKY messages from the stream
             tpv_data = None
@@ -130,9 +164,9 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                         )
                         time.sleep(1)
                         return True
-                elif CONF.aprsd_gps_extension.beacon_type == "interval":
+                elif self.beacon_type == "interval":
                     # Now only beacon if the time interval from CONF.beacon_interval has passed
-                    if time.time() - self.last_beacon_time < CONF.beacon_interval:
+                    if time.time() - self.last_beacon_time < self.beacon_interval:
                         LOG.info("Not sending beacon, time interval has not passed")
                         time.sleep(1)
                         return True
