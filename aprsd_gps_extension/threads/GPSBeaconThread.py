@@ -63,6 +63,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         stats_collector = collector.Collector()
         LOG.error(f"REGISTERING GPSStats with stats_collector: {stats_collector}")
         stats_collector.register_producer(GPSStats)
+        self.beacon_interval = CONF.beacon_interval
         self.polling_interval = CONF.aprsd_gps_extension.polling_interval
         self.beacon_type = CONF.aprsd_gps_extension.beacon_type
         self.smart_beacon_distance_threshold = (
@@ -108,16 +109,36 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         LOG.error("Sending beacon to browser")
         self.notify_queue.put({"message": "beacon sent"})
 
+    def get_gps_settings(self):
+        LOG.info("Getting GPS settings")
+        self.notify_queue.put(
+            {"message": "gps_settings", "settings": self.get_settings()}
+        )
+
+    def get_settings(self):
+        return {
+            "beacon_type": self.beacon_type,
+            "beacon_interval": self.beacon_interval,
+            "smart_beacon_distance_threshold": self.smart_beacon_distance_threshold,
+            "smart_beacon_time_window": self.smart_beacon_time_window,
+        }
+
     def loop(self):
         # First check if the notify queue has a message
         if not self.notify_queue.empty():
             message = self.notify_queue.get_nowait()
             LOG.info(f"Notify queue message: {message}")
-            if message.get("message") == "beaconing_settings_changed":
-                self.update_settings(message)
-            elif message.get("message") == "beacon sent":
-                # put it back on the queue
-                self.notify_queue.put(message)
+            match message.get("message"):
+                case "get_gps_settings":
+                    self.get_gps_settings()
+                case "beaconing_settings_changed":
+                    self.update_settings(message)
+                case "beacon sent":
+                    # put it back on the queue
+                    self.notify_queue.put(message)
+                case _:
+                    LOG.warning(f"Unknown message: {message}")
+                    self.notify_queue.put(message)
 
         if self.loop_count % CONF.aprsd_gps_extension.polling_interval == 0:
             # Collect the latest TPV and SKY messages from the stream

@@ -46,14 +46,14 @@ extension_opts = [
     ),
     cfg.IntOpt(
         "smart_beacon_distance_threshold",
-        default=100,
-        help="The distance in feet that the device must move before sending a beacon packet,"
+        default=50,
+        help="The distance in meters that the device must move before sending a beacon packet,"
         "when smart beaconing is enabled.",
     ),
     cfg.IntOpt(
         "smart_beacon_time_window",
-        default=10,
-        help="The time window in minutes that the device must be at the same position before sending a beacon packet, when smart beaconing is enabled.",
+        default=60,
+        help="The time window in seconds that the device must be at the same position before sending a beacon packet, when smart beaconing is enabled.",
     ),
 ]
 
