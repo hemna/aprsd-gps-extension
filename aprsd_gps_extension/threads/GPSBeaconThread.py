@@ -61,7 +61,6 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
             return
 
         stats_collector = collector.Collector()
-        LOG.error(f"REGISTERING GPSStats with stats_collector: {stats_collector}")
         stats_collector.register_producer(GPSStats)
         self.beacon_interval = CONF.beacon_interval
         self.polling_interval = CONF.aprsd_gps_extension.polling_interval
@@ -106,7 +105,6 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         )
         aprsd_tx.send(pkt, direct=True)
         self.last_beacon_time = time.time()
-        LOG.error("Sending beacon to browser")
         self.notify_queue.put({"message": "beacon sent"})
 
     def get_gps_settings(self):
