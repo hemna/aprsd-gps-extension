@@ -30,7 +30,7 @@ dynamic = ["version"]
 #
 # This field corresponds to the "Description" metadata field:
 # https://packaging.python.org/specifications/core-metadata/#description-optional
-readme = {file = "README.md", content-type = "text/x-markdown"}
+readme = {file = "README.md", content-type = "text/markdown"}
 
 
 # This is either text indicating the license for the distribution, or a file
@@ -120,9 +120,10 @@ dependencies = [
 # maintainers, and where to support the project financially. The key is
 # what's used to render the link text on PyPI.
 [project.urls]
-# "Homepage" = "https://github.com/hemna/aprsd-admin-extension"
-# "Bug Reports" = "https://github.com/hemna/aprsd-admin-extension/issues"
-# "Source" = "https://github.com/hemna/aprsd-admin-extension"
+"Homepage" = "https://github.com/hemna/aprsd-admin-extension"
+"Bug Reports" = "https://github.com/hemna/aprsd-admin-extension/issues"
+"Source" = "https://github.com/hemna/aprsd-admin-extension"
+"Documentation" = "https://aprsd-gps-extension.readthedocs.io/en/latest/"
 
 # The main entry points for extensions
 [project.entry-points."aprsd.extension"]
