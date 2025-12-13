@@ -175,10 +175,9 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                         tpv_data
                     )
                     if should_beacon:
-                        LOG.info("Sending beacon, enough movement or time has passed")
                         self.send_beacon(tpv_data, sky_data)
                     else:
-                        LOG.info(
+                        LOG.debug(
                             "Not sending beacon, not enough movement or time has passed"
                         )
                         time.sleep(1)
@@ -186,13 +185,12 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
                 elif self.beacon_type == "interval":
                     # Now only beacon if the time interval from CONF.beacon_interval has passed
                     if time.time() - self.last_beacon_time < self.beacon_interval:
-                        LOG.info("Not sending beacon, time interval has not passed")
                         time.sleep(1)
                         return True
                     else:
                         self.send_beacon(tpv_data, sky_data)
                 else:
-                    LOG.info("Not sending beacon, beacon type is not set")
+                    LOG.warning("Not sending beacon, beacon type is not set")
                     time.sleep(1)
                     return True
 
