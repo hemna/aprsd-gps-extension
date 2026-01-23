@@ -132,6 +132,9 @@ dependencies = [
 [project.entry-points."oslo.config.opts"]
     "aprsd_gps_extension.conf" = "aprsd_gps_extension.conf.opts:list_opts"
 
+[project.scripts]
+    "aprsd-gps-extension-export-config" = "aprsd_gps_extension.cli:main"
+
 # If you are using a different build backend, you will need to change this.
 [tool.setuptools]
 # If there are data files included in your packages that need to be
