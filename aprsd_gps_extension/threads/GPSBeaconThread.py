@@ -196,7 +196,7 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
 
             except Exception as e:
                 LOG.error(f"Error polling GPS daemon: {e}")
-                GPSStats().parse_message({"class": "ERROR"})
+                GPSStats().parse_message({"class": "ERROR", "message": str(e)})
                 time.sleep(1)
                 return True
 

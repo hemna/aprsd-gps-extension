@@ -25,6 +25,7 @@ class GPSStats:
     }
     data = {
         "fix": False,
+        "error": None,
         "time": None,
         "latitude": None,
         "longitude": None,
@@ -59,6 +60,7 @@ class GPSStats:
                     fix = False
 
                 self.data["fix"] = fix
+                self.data["error"] = None
 
                 for key, value in self._key_lookup.items():
                     self.data[key] = message.get(value)
@@ -80,6 +82,7 @@ class GPSStats:
             case "ERROR":
                 # LOG.debug(f"ERROR message: {message}")
                 self.data["fix"] = False
+                self.data["error"] = message.get("message", "Unknown GPS error")
                 for key, value in self._key_lookup.items():
                     self.data[key] = None
             case _:
