@@ -10,6 +10,7 @@ from oslo_config import cfg
 
 from aprsd_gps_extension.conf import main  # noqa: F401
 from aprsd_gps_extension.gps_processor import SmartBeaconProcessor
+from aprsd_gps_extension.settings_store import GPSSettingsStore
 from aprsd_gps_extension.stats import GPSStats
 
 CONF = cfg.CONF
@@ -62,19 +63,33 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
 
         stats_collector = collector.Collector()
         stats_collector.register_producer(GPSStats)
-        self.beacon_interval = CONF.beacon_interval
-        self.polling_interval = CONF.aprsd_gps_extension.polling_interval
-        self.beacon_type = CONF.aprsd_gps_extension.beacon_type
-        self.smart_beacon_distance_threshold = (
-            CONF.aprsd_gps_extension.smart_beacon_distance_threshold
+
+        # Load persisted settings from disk, falling back to CONF values
+        settings_store = GPSSettingsStore()
+        settings_store.load()
+        self.beacon_interval = settings_store.get(
+            "beacon_interval",
+            CONF.beacon_interval,
         )
-        self.smart_beacon_time_window = (
-            CONF.aprsd_gps_extension.smart_beacon_time_window
+        self.polling_interval = CONF.aprsd_gps_extension.polling_interval
+        self.beacon_type = settings_store.get(
+            "beacon_type",
+            CONF.aprsd_gps_extension.beacon_type,
+        )
+        self.smart_beacon_distance_threshold = settings_store.get(
+            "smart_beacon_distance_threshold",
+            CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
+        )
+        self.smart_beacon_time_window = settings_store.get(
+            "smart_beacon_time_window",
+            CONF.aprsd_gps_extension.smart_beacon_time_window,
         )
         self.beacon_processor = SmartBeaconProcessor(
-            distance_threshold_feet=CONF.aprsd_gps_extension.smart_beacon_distance_threshold,
-            time_window_minutes=CONF.aprsd_gps_extension.smart_beacon_time_window,
+            distance_threshold_feet=self.smart_beacon_distance_threshold,
+            time_window_minutes=self.smart_beacon_time_window,
         )
+        if len(settings_store) > 0:
+            LOG.info(f"Loaded persisted GPS settings: {settings_store.data}")
 
     def _debug(self, message):
         if CONF.aprsd_gps_extension.debug:
@@ -84,8 +99,16 @@ class GPSBeaconThread(aprsd_threads.APRSDThread):
         self.beacon_interval = message.get("beacon_interval")
         self.beacon_type = message.get("beacon_type")
         self.smart_beacon_distance_threshold = message.get(
-            "smart_beacon_distance_threshold"
+            "smart_beacon_distance_threshold",
         )
+        self.smart_beacon_time_window = message.get("smart_beacon_time_window")
+        # rebuild the SmartBeaconProcessor
+        self.beacon_processor = SmartBeaconProcessor(
+            distance_threshold_feet=self.smart_beacon_distance_threshold,
+            time_window_minutes=self.smart_beacon_time_window,
+        )
+        # Persist settings to disk
+        GPSSettingsStore().update_from_message(message)
         self.smart_beacon_time_window = message.get("smart_beacon_time_window")
         # rebuild the SmartBeaconProcessor
         self.beacon_processor = SmartBeaconProcessor(
